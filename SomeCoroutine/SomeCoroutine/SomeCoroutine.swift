@@ -147,9 +147,6 @@ public class SomeGenerator<Type> {
 					//check condition
 					while validSelf.who != .yield {
 						validSelf.yieldIsReady = true
-						if validSelf.who != .yield {
-							validSelf.condition.wait()
-						}
 					}
 					let lastValue = yieldsBlock(validSelf.yielder)
 					validSelf.finished = true
@@ -160,12 +157,16 @@ public class SomeGenerator<Type> {
 				}
 			}
 			//wait for yield
-			while !yieldIsReady {}
+			while !yieldIsReady {
+				if yieldIsSleeping {
+					condition.signal()
+				}
+			}
 			who = .yield
 			while who != .next {
 				nextIsReady = true
-				if who != .next {
-					condition.wait()
+				if yieldIsSleeping {
+					condition.signal()
 				}
 			}
 			if let lastValue = lastYielded {
@@ -220,6 +221,20 @@ public class SomeGenerator<Type> {
 			}
 		}
 	}
+	private var _yieldIsSleeping: Bool = false
+	private var yieldIsSleeping: Bool {
+		get {
+			return syncQueue.sync {
+				return _yieldIsSleeping
+			}
+		}
+
+		set {
+			syncQueue.sync {
+				_yieldIsSleeping = newValue
+			}
+		}
+	}
 	private var _yieldIsReady: Bool = false
 	private var yieldIsReady: Bool {
 		get {
@@ -262,7 +277,9 @@ public class SomeGenerator<Type> {
 		set {
 			syncQueue.sync {
 				_who = newValue
-				condition.signal()
+				if _who == .yield {
+					condition.signal()
+				}
 			}
 		}
 	}
@@ -308,9 +325,11 @@ public class SomeGenerator<Type> {
 		while who != .yield {
 			yieldIsReady = true
 			if who != .yield {
+				yieldIsSleeping = true
 				condition.wait()
 			}
 		}
+		yieldIsSleeping = false
 		return yieldReturn
 	}
 }
