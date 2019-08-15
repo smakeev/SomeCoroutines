@@ -44,11 +44,17 @@ public class SomeGenerator<Type> {
 
 		public func subYield(_ generator: SomeGenerator<GeneratorReturnType>) {
 			while !generator.finished {
-				if let result = generator.next() {
+				if let result = generator.next(self.generator?.additionalParam) {
+					self.generator?.additionalParam = nil
 					self.yield(result)
 				}
 			}
 		}
+	}
+
+	deinit {
+		//we need to release the queue thread and not do any yields
+		
 	}
 
 	fileprivate var _finished: Bool = false
@@ -398,7 +404,7 @@ public struct GeneratorIterator<Type>: IteratorProtocol {
 	}
 
 	mutating public func next() -> Type? {
-		return generator.internalNext()
+		return generator.next()
 	}
 }
 

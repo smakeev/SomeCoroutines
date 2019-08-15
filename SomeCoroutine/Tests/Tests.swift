@@ -127,7 +127,86 @@ class Tests: XCTestCase {
 		XCTAssert(generator.next(100) == nil)
 		XCTAssert(generator.next() == nil)
 		XCTAssert(generator.current == 100)
+
+
+		let generator1 = SG<Int>.generator() { y in
+			y.subYield(SG<Int>.generator() { y in
+				let result = y.yield(25)
+				if let result = result as? Int {
+					y.yield(result)
+				}
+				y.yield(24)
+				y.yield(23)
+
+				let result1 = y.yield(22)
+				if let result1 = result1 as? Int {
+					y.yield(result1)
+				}
+				y.subYield(SG.fromArray([1, 2 ,3]))
+				y.yield(12)
+
+				return 100 //last value must be returned
+			})
+			return 100 //last value must be returned
+		}
+		XCTAssert(generator1.next(2) == 25)
+		XCTAssert(generator1.next() == 2)
+		XCTAssert(generator1.next() == 24)
+		XCTAssert(generator1.next() == 23)
+		XCTAssert(generator1.next(-100) == 22)
+		XCTAssert(generator1.next() == -100)
+		XCTAssert(generator1.next(80) == 1) //80 is used to test that it could be ignored.
+		XCTAssert(generator1.next() == 2)
+		XCTAssert(generator1.next() == 3)
+		XCTAssert(generator1.next() == 12)
+		XCTAssert(generator1.next() == 100)
+		XCTAssert(generator1.next() == 100)
+		XCTAssert(generator1.next() == nil)
+		XCTAssert(generator1.next(100) == nil)
+		XCTAssert(generator1.next() == nil)
+		XCTAssert(generator1.current == 100)
+
+		let generator2 = SG<Int>.generator() { y in
+			y.subYield(SG<Int>.generator() { y in
+				y.subYield(SG<Int>.generator() { y in
+				let result = y.yield(25)
+				if let result = result as? Int {
+					y.yield(result)
+				}
+				y.yield(24)
+				y.yield(23)
+
+				let result1 = y.yield(22)
+				if let result1 = result1 as? Int {
+					y.yield(result1)
+				}
+				y.subYield(SG.fromArray([1, 2 ,3]))
+				y.yield(12)
+
+				return 100 //last value must be returned
+			})
+			return 100 //last value must be returned
+		})
+		return 100
 	}
+		XCTAssert(generator2.next(2) == 25)
+		XCTAssert(generator2.next() == 2)
+		XCTAssert(generator2.next() == 24)
+		XCTAssert(generator2.next() == 23)
+		XCTAssert(generator2.next(-100) == 22)
+		XCTAssert(generator2.next() == -100)
+		XCTAssert(generator2.next(80) == 1) //80 is used to test that it could be ignored.
+		XCTAssert(generator2.next() == 2)
+		XCTAssert(generator2.next() == 3)
+		XCTAssert(generator2.next() == 12)
+		XCTAssert(generator2.next() == 100)
+		XCTAssert(generator2.next() == 100)
+		XCTAssert(generator2.next() == 100)
+		XCTAssert(generator2.next() == nil)
+		XCTAssert(generator2.next(100) == nil)
+		XCTAssert(generator2.next() == nil)
+		XCTAssert(generator2.current == 100)
+}
 
 	func testToArray() {
 		let range = SomeGenerator.range(0, 10, 1)
@@ -140,6 +219,21 @@ class Tests: XCTestCase {
 										      [0, 1, 2],
 										      [0, 1, 2, 3],
 											  [0, 1, 2, 3, 4]])
+
+		let yieldGen = SG<Int>.generator() { y in
+			y.yield(0)
+			y.subYield(SG.range(1, 100))
+			let array = SG.range(100, 201, 1).toArray()
+			y.subYield(SG.comprehension({array[$0]}, iterations: array.count))
+			y.subYield(SG.generator() { y in
+				y.subYield(SG.range(201, 999))
+				return 999
+			})
+			return 1000
+		}
+
+		let arrayToCompare = SG<Int>.range(1001).toArray()
+		XCTAssert(yieldGen.toArray() == arrayToCompare)
 	}
 
 	func testNext() {
@@ -181,6 +275,20 @@ class Tests: XCTestCase {
 		}
 		XCTAssert(result == input)
 		for str in fromArray {
+			result.append(str)
+		}
+		XCTAssert(result == input)
+		result = [String]()
+
+		let generator = SG<String>.generator() { y in
+			y.yield("first")
+			y.subYield(SG<String>.generator() { y in
+				return "second"
+			})
+			return "third"
+		}
+
+		for str in generator {
 			result.append(str)
 		}
 		XCTAssert(result == input)
