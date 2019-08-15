@@ -6,12 +6,73 @@
 //  Copyright © 2019 Sergey Makeev. All rights reserved.
 //
 
+import Foundation
+
 public typealias SG = SomeGenerator
+
+public struct SGVoid {
+	//empty struct ot be returned from routine (Generator) if it should return nothing
+}
+
+public protocol YieldProviderProtocol {
+	associatedtype GeneratorReturnType
+	@discardableResult func yield(_ whatToReturn: GeneratorReturnType) -> Any?
+	func subYield(_ generator: SomeGenerator<GeneratorReturnType>)
+}
+
 
 public class SomeGenerator<Type> {
 
-	public internal(set) var finished: Bool = false
+	private enum WhoWorks: Int {
+		case undefined
+		case next
+		case yield
+	}
+
+	public class YieldProvider<Type>: YieldProviderProtocol {
+		public typealias GeneratorReturnType = Type
+
+		internal weak var generator: SomeGenerator<Type>? = nil
+
+		internal init(generator: SomeGenerator<Type>) {
+			self.generator = generator
+		}
+
+		@discardableResult public func yield(_ whatToReturn: GeneratorReturnType) -> Any? {
+			return generator?.internalYield(whatToReturn)
+		}
+
+		public func subYield(_ generator: SomeGenerator<GeneratorReturnType>) {
+			while !generator.finished {
+				if let result = generator.next() {
+					self.yield(result)
+				}
+			}
+		}
+	}
+
+	fileprivate var _finished: Bool = false
+	public internal(set) var finished: Bool {
+		get {
+			return syncQueue.sync {
+				return _finished
+			}
+		}
+
+		set {
+			syncQueue.sync {
+				_finished = newValue
+			}
+		}
+	}
 	public internal(set) var current: Type? = nil
+
+	public static func generator(_ builder: @escaping (YieldProvider<Type>) -> Type) -> SomeGenerator {
+		let generator =  SomeGenerator<Type>()
+		generator.yielder = YieldProvider<Type>(generator: generator)
+		generator.yieldsBlock = builder
+		return generator
+	}
 
 	public static func fromArray(_ array: [Type], additional: ((Type, Any) -> Type)? = nil) -> SomeGenerator {
 		return SomeGenerator.comprehension({array[$0]}, iterations: array.count, additional: additional)
@@ -41,7 +102,7 @@ public class SomeGenerator<Type> {
 	public func toArray() -> Array<Type> {
 		var array = [Type]()
 		while !finished {
-			if let value = internalNext() {
+			if let value = next() {
 				array.append(value)
 			}
 		}
@@ -69,22 +130,142 @@ public class SomeGenerator<Type> {
 	There is no additional action for YIELD generators.
 	*/
 	public func next(_ value: Any?) -> Type? {
+		guard !finished else { return nil }
 		additionalParam = value
 		if rangeBuilder != nil ||
 		   actionBuilder != nil {
 				return internalNext()
 		}
 
+		if let yieldsBlock = yieldsBlock {
+			if queue == nil {
+				//first iteration
+				queue = DispatchQueue(label: "yield queue for generator")
+				guard let validQueue = queue else { return nil }
+				validQueue.async { [weak self] in
+					guard let validSelf = self else { return }
+					//check condition
+					while validSelf.who != .yield {
+						validSelf.yieldIsReady = true
+						if validSelf.who != .yield {
+							validSelf.condition.wait()
+						}
+					}
+					let lastValue = yieldsBlock(validSelf.yielder)
+					validSelf.finished = true
+					validSelf.lastYielded = lastValue
+					//wakeUp generator thread
+					while !validSelf.nextIsReady {}
+					validSelf.who = .next
+				}
+			}
+			//wait for yield
+			while !yieldIsReady {}
+			who = .yield
+			while who != .next {
+				nextIsReady = true
+				if who != .next {
+					condition.wait()
+				}
+			}
+			if let lastValue = lastYielded {
+				//current to lastYielded if lastYielded !nil
+				current = lastValue
+			}
+			defer {
+				lastYielded = nil
+			}
+			return lastYielded
+		}
+
 		return nil
 	}
 
-	internal var rangeBuilder: ((_: SomeGenerator<Type>) -> Type?)? = nil
-	internal var actionBuilder: ((Int) -> Type?)? = nil
-	internal var isFinishedBlock: ((Int, Type?) -> Bool)? = nil
-	internal var additionalAction: ((Type, Any) -> Type)? = nil
+	internal var rangeBuilder:     ((_: SomeGenerator<Type>) -> Type?)? = nil
+	internal var actionBuilder:    ((Int) -> Type?)?                    = nil
+	internal var isFinishedBlock:  ((Int, Type?) -> Bool)?              = nil
+	internal var additionalAction: ((Type, Any) -> Type)?               = nil
+	internal var yieldsBlock:      ((YieldProvider<Type>) -> Type)?     = nil
 
 	internal var iterationNumber: Int = 0
-	internal var additionalParam: Any? = nil
+	internal var _additionalParam: Any? = nil
+	internal var additionalParam: Any? {
+		get {
+			return syncQueue.sync {
+				return _additionalParam
+			}
+		}
+
+		set {
+			syncQueue.sync {
+				_additionalParam = newValue
+			}
+		}
+	}
+
+	private var yielder:     YieldProvider<Type>!
+	private var queue:       DispatchQueue? = nil
+	private var syncQueue:   DispatchQueue = DispatchQueue(label: "generator sync queue")
+	private var _lastYielded: Type? = nil
+	private var lastYielded: Type? {
+		get {
+			return syncQueue.sync(){
+				return _lastYielded
+			}
+		}
+
+		set {
+			syncQueue.sync {
+				_lastYielded = newValue
+			}
+		}
+	}
+	private var _yieldIsReady: Bool = false
+	private var yieldIsReady: Bool {
+		get {
+			return syncQueue.sync {
+				return _yieldIsReady
+			}
+		}
+
+		set {
+			syncQueue.sync {
+				_yieldIsReady = newValue
+				_nextIsReady = !newValue
+			}
+		}
+	}
+	private var _nextIsReady: Bool = false
+	private var nextIsReady: Bool {
+		get {
+			return syncQueue.sync {
+				return _nextIsReady
+			}
+		}
+
+		set {
+			syncQueue.sync {
+				_nextIsReady = newValue
+				_yieldIsReady = !newValue
+			}
+		}
+	}
+	private var condition: NSCondition = NSCondition()
+	private var _who: WhoWorks = .undefined
+	private var who: WhoWorks {
+		get {
+			return syncQueue.sync {
+				return _who
+			}
+		}
+
+		set {
+			syncQueue.sync {
+				_who = newValue
+				condition.signal()
+			}
+		}
+	}
 
 	fileprivate func internalNext() -> Type? {
 		guard !finished else { return nil }
@@ -118,8 +299,19 @@ public class SomeGenerator<Type> {
 		return nil
 	}
 
-	fileprivate func yield(_ whatToReturn: Type) -> Any? {
-		return nil
+	fileprivate func internalYield(_ whatToReturn: Type) -> Any? {
+		lastYielded = whatToReturn
+		while !nextIsReady {}
+		who = .next
+		let yieldReturn = additionalParam
+
+		while who != .yield {
+			yieldIsReady = true
+			if who != .yield {
+				condition.wait()
+			}
+		}
+		return yieldReturn
 	}
 }
 

@@ -86,12 +86,47 @@ class Tests: XCTestCase {
 		let comprehension = SG.comprehension({array[$0] * array[$0]}, iterations: array.count)
 		XCTAssert(comprehension.testComprehension() == [0, 1, 4, 9 , 16, 25])
 		//only for odd
-		let comprehensionOdd = SG<Int>.comprehension({ 
+		let comprehensionOdd = SG<Int>.comprehension({
 			guard $0 % 2 != 0 else { return nil }
 			return array[$0] * array[$0]
 
 		}, iterations: array.count)
 		XCTAssert(comprehensionOdd.testComprehension() == [1, 9, 25])
+	}
+
+	func testYieldGeneratorCreation() {
+		let generator = SG<Int>.generator() { y in
+				let result = y.yield(25)
+				if let result = result as? Int {
+					y.yield(result)
+				}
+				y.yield(24)
+				y.yield(23)
+
+				let result1 = y.yield(22)
+				if let result1 = result1 as? Int {
+					y.yield(result1)
+				}
+				y.subYield(SG.fromArray([1, 2 ,3]))
+				y.yield(12)
+
+				return 100 //last value must be returned
+		}
+		XCTAssert(generator.next(2) == 25)
+		XCTAssert(generator.next() == 2)
+		XCTAssert(generator.next() == 24)
+		XCTAssert(generator.next() == 23)
+		XCTAssert(generator.next(-100) == 22)
+		XCTAssert(generator.next() == -100)
+		XCTAssert(generator.next(80) == 1) //80 is used to test that it could be ignored.
+		XCTAssert(generator.next() == 2)
+		XCTAssert(generator.next() == 3)
+		XCTAssert(generator.next() == 12)
+		XCTAssert(generator.next() == 100)
+		XCTAssert(generator.next() == nil)
+		XCTAssert(generator.next(100) == nil)
+		XCTAssert(generator.next() == nil)
+		XCTAssert(generator.current == 100)
 	}
 
 	func testToArray() {
