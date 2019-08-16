@@ -8,38 +8,39 @@
 
 import Foundation
 
-public typealias SG = SomeGenerator
-
-public struct SGVoid {
-	//empty struct ot be returned from routine (Generator) if it should return nothing
-}
-
 public protocol YieldProviderProtocol {
 	associatedtype GeneratorReturnType
 	@discardableResult func yield(_ whatToReturn: GeneratorReturnType) throws -> Any?
-	func subYield(_ generator: SomeGenerator<GeneratorReturnType>) throws
+	func subYield(_ generator: SG<GeneratorReturnType>) throws
 }
 
+public protocol SomeGeneratorProtocol {
+	associatedtype GeneratorReturnType
+	
+	var current: GeneratorReturnType? {get}
+	var finished: Bool {get}
+	
+	func toArray() -> Array<GeneratorReturnType>
+	func next() -> GeneratorReturnType?
+	func next(_ value: Any?) -> GeneratorReturnType?
+	func cancel()
+}
 
-public class SomeGenerator<Type> {
+public class SG<Type> : SomeGeneratorProtocol {
 
-	private enum Errors: Error {
+	public typealias GeneratorReturnType = Type
+
+	fileprivate enum Errors: Error {
 		case noGenerator
 		case generatorFinished
-	}
-
-	private enum WhoWorks: Int {
-		case undefined
-		case next
-		case yield
 	}
 
 	public class YieldProvider<Type>: YieldProviderProtocol {
 		public typealias GeneratorReturnType = Type
 
-		internal weak var generator: SomeGenerator<Type>? = nil
+		fileprivate weak var generator: SomeGenerator<Type>? = nil
 
-		internal init(generator: SomeGenerator<Type>?) {
+		fileprivate init(generator: SomeGenerator<Type>?) {
 			self.generator = generator
 		}
 
@@ -51,7 +52,7 @@ public class SomeGenerator<Type> {
 			return try generator?.internalYield(whatToReturn)
 		}
 
-		public func subYield(_ generator: SomeGenerator<GeneratorReturnType>) throws {
+		public func subYield(_ generator: SG<GeneratorReturnType>) throws {
 			guard let validGen = self.generator else { throw Errors.noGenerator }
 			if validGen.finished {
 				throw Errors.generatorFinished
@@ -66,13 +67,128 @@ public class SomeGenerator<Type> {
 	}
 
 	deinit {
+		cancel()
+	}
+	
+	public func cancel() {
+		self.generator.cancel()
+	}
+	
+	public var finished: Bool {
+		return self.generator.finished
+	}
+	
+	public var current: Type? { return self.generator.current }
+
+	public static func generator(_ builder: @escaping (YieldProvider<Type>) throws -> Type) -> SG {
+		let SELF = SG<Type>()
+		let generator =  SomeGenerator<Type>.generator(builder)
+		SELF.generator = generator
+		return SELF
+	}
+
+	public static func fromArray(_ array: [Type], additional: ((Type, Any) -> Type)? = nil) -> SG {
+		let SELF = SG<Type>()
+		let generator = SomeGenerator.comprehension({array[$0]}, iterations: array.count, additional: additional)
+		SELF.generator = generator
+		return SELF
+	}
+
+	public static func comprehension(_ action: @escaping ((Int) -> Type?), iterations: Int, additional: ((Type, Any) -> Type)? = nil) -> SG {
+		let SELF = SG<Type>()
+		let generator = SomeGenerator.comprehension(action, iterations: iterations, additional: additional)
+		SELF.generator = generator
+		return SELF
+	}
+
+	public static func comprehension(_ action: @escaping ((Int) -> Type?), isFinished: @escaping ((Int, Type?)->Bool), additional: ((Type, Any) -> Type)? = nil) -> SG {
+		let SELF = SG<Type>()
+		let generator = SomeGenerator.comprehension(action, isFinished: isFinished, additional: additional)
+		SELF.generator = generator
+		return SELF
+	}
+
+	public func toArray() -> Array<Type> {
+		return generator.toArray()
+	}
+
+	public func next() -> Type? {
+		return generator.next()
+	}
+
+	public func next(_ value: Any?) -> Type? {
+		return generator.next(value)
+	}
+
+	fileprivate var generator: SomeGenerator<Type>!
+	
+	private init() {}
+	
+	#if DEBUG
+	internal var deinitPromise: (() -> Void)? {
+		get {
+			return generator.deinitPromise
+		}
+		
+		set {
+			generator.deinitPromise = newValue
+		}
+	}
+	#endif
+}
+
+public extension SG where Type: Numeric & Comparable {
+
+	static func range(_ target: Type, additional: ((Type, Any) -> Type)? = nil) -> SG {
+		let generator = SomeGenerator.range(nil, target)
+		let SELF = SG<Type>()
+		SELF.generator = generator
+		return SELF
+	}
+
+	static func range(_ target: Type, step: Type, additional: ((Type, Any) -> Type)? = nil) -> SG {
+		let SELF = SG<Type>()
+		let generator = SomeGenerator.range(nil, target, step, additional: additional)
+		SELF.generator = generator
+		return SELF
+	}
+
+	static func range(_ begin: Type?, _ target: Type, _ step: Type? = nil, additional: ((Type, Any) -> Type)? = nil) -> SG {
+		let SELF = SG<Type>()
+		let generator = SomeGenerator.range(begin, target, step, additional: additional)
+		SELF.generator = generator
+		return SELF
+	}
+}
+
+public struct SGVoid {
+	//empty struct ot be returned from routine (Generator) if it should return nothing
+}
+
+fileprivate class SomeGenerator<Type> {
+
+	private enum WhoWorks: Int {
+		case undefined
+		case next
+		case yield
+	}
+
+
+	deinit {
+		cancel()
+	}
+
+	public func cancel() {
 		//we need to release the queue thread and not do any yields
 		//set generator to be finished
 		finished = true
 		//wake up yield thread to be sure it will be finished.
-		if yieldIsSleeping {
+		who = .yield
+
+		while yieldIsSleeping {
 			condition.signal()
 		}
+
 	}
 
 	fileprivate var _finished: Bool = false
@@ -91,7 +207,7 @@ public class SomeGenerator<Type> {
 	}
 	public internal(set) var current: Type? = nil
 
-	public static func generator(_ builder: @escaping (YieldProvider<Type>) throws -> Type) -> SomeGenerator {
+	public static func generator(_ builder: @escaping (SG<Type>.YieldProvider<Type>) throws -> Type) -> SomeGenerator {
 		let generator =  SomeGenerator<Type>()
 		generator.yieldsBlock = builder
 		return generator
@@ -167,11 +283,14 @@ public class SomeGenerator<Type> {
 				guard let validQueue = queue else { return nil }
 				validQueue.async { [weak self] in
 					//check condition
+					#if DEBUG
+					let promise = self?.deinitPromise
+					#endif
 					while (self?.who ?? .yield) != .yield {
 						self?.yieldIsReady = true
 					}
 					do {
-						let yielder = YieldProvider<Type>(generator: self)
+						let yielder = SG<Type>.YieldProvider<Type>(generator: self)
 						let lastValue = try yieldsBlock(yielder)
 						self?.lastYielded = lastValue
 						self?.finished = true
@@ -180,7 +299,13 @@ public class SomeGenerator<Type> {
 						self?.who = .next
 					} catch {
 						//generator has been finished.
-						print("!!!! HERE")
+						#if DEBUG
+					
+						print("!!!! Catch in yields")
+						if let promise = promise {
+							promise()
+						}
+						#endif
 					}
 
 				}
@@ -215,7 +340,7 @@ public class SomeGenerator<Type> {
 	internal var actionBuilder:    ((Int) -> Type?)?                    = nil
 	internal var isFinishedBlock:  ((Int, Type?) -> Bool)?              = nil
 	internal var additionalAction: ((Type, Any) -> Type)?               = nil
-	internal var yieldsBlock:      ((YieldProvider<Type>) throws -> Type)?     = nil
+	internal var yieldsBlock:      ((SG<Type>.YieldProvider<Type>) throws -> Type)?     = nil
 
 	internal var iterationNumber: Int = 0
 	internal var _additionalParam: Any? = nil
@@ -313,6 +438,10 @@ public class SomeGenerator<Type> {
 		}
 	}
 
+	#if DEBUG
+	internal var deinitPromise: (() -> Void)?
+	#endif
+
 	fileprivate func internalNext() -> Type? {
 		guard !finished else { return nil }
 		if let rangeGenerator = rangeBuilder {
@@ -339,7 +468,7 @@ public class SomeGenerator<Type> {
 				finished = true
 			}
 			iterationNumber += 1
-			return current
+			return result != nil ? current : nil
 		}
 
 		return nil
@@ -347,7 +476,7 @@ public class SomeGenerator<Type> {
 
 	fileprivate func internalYield(_ whatToReturn: Type) throws -> Any? {
 		if finished {
-			throw Errors.generatorFinished
+			throw SG<Type>.Errors.generatorFinished
 		}
 		lastYielded = whatToReturn
 		while !nextIsReady {}
@@ -361,15 +490,15 @@ public class SomeGenerator<Type> {
 				condition.wait()
 			}
 		}
-		if finished {
-			throw Errors.generatorFinished
-		}
 		yieldIsSleeping = false
+		if finished {
+			throw SG<Type>.Errors.generatorFinished
+		}
 		return yieldReturn
 	}
 }
 
-public extension SomeGenerator where Type: Numeric & Comparable {
+fileprivate extension SomeGenerator where Type: Numeric & Comparable {
 
 	static func range(_ target: Type, additional: ((Type, Any) -> Type)? = nil) -> SomeGenerator {
 		return SomeGenerator.range(nil, target)
@@ -414,7 +543,7 @@ public extension SomeGenerator where Type: Numeric & Comparable {
 	}
 }
 
-extension SomeGenerator: Sequence {
+extension SG: Sequence {
 	public typealias Element = Type
 	public typealias Iterator = GeneratorIterator<Type>
 
@@ -426,9 +555,9 @@ extension SomeGenerator: Sequence {
 public struct GeneratorIterator<Type>: IteratorProtocol {
 	public typealias Element = Type
 
-	var generator: SomeGenerator<Type>
+	var generator: SG<Type>
 
-	init(generator: SomeGenerator<Type>) {
+	init(generator: SG<Type>) {
 		self.generator = generator
 	}
 
