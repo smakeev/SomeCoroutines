@@ -16,12 +16,17 @@ public struct SGVoid {
 
 public protocol YieldProviderProtocol {
 	associatedtype GeneratorReturnType
-	@discardableResult func yield(_ whatToReturn: GeneratorReturnType) -> Any?
-	func subYield(_ generator: SomeGenerator<GeneratorReturnType>)
+	@discardableResult func yield(_ whatToReturn: GeneratorReturnType) throws -> Any?
+	func subYield(_ generator: SomeGenerator<GeneratorReturnType>) throws
 }
 
 
 public class SomeGenerator<Type> {
+
+	private enum Errors: Error {
+		case noGenerator
+		case generatorFinished
+	}
 
 	private enum WhoWorks: Int {
 		case undefined
@@ -34,19 +39,27 @@ public class SomeGenerator<Type> {
 
 		internal weak var generator: SomeGenerator<Type>? = nil
 
-		internal init(generator: SomeGenerator<Type>) {
+		internal init(generator: SomeGenerator<Type>?) {
 			self.generator = generator
 		}
 
-		@discardableResult public func yield(_ whatToReturn: GeneratorReturnType) -> Any? {
-			return generator?.internalYield(whatToReturn)
+		@discardableResult public func yield(_ whatToReturn: GeneratorReturnType) throws -> Any? {
+			guard let validGen = generator else { throw Errors.noGenerator }
+			if validGen.finished {
+				throw Errors.generatorFinished
+			}
+			return try generator?.internalYield(whatToReturn)
 		}
 
-		public func subYield(_ generator: SomeGenerator<GeneratorReturnType>) {
+		public func subYield(_ generator: SomeGenerator<GeneratorReturnType>) throws {
+			guard let validGen = self.generator else { throw Errors.noGenerator }
+			if validGen.finished {
+				throw Errors.generatorFinished
+			}
 			while !generator.finished {
 				if let result = generator.next(self.generator?.additionalParam) {
 					self.generator?.additionalParam = nil
-					self.yield(result)
+					try self.yield(result)
 				}
 			}
 		}
@@ -54,7 +67,12 @@ public class SomeGenerator<Type> {
 
 	deinit {
 		//we need to release the queue thread and not do any yields
-		
+		//set generator to be finished
+		finished = true
+		//wake up yield thread to be sure it will be finished.
+		if yieldIsSleeping {
+			condition.signal()
+		}
 	}
 
 	fileprivate var _finished: Bool = false
@@ -73,9 +91,8 @@ public class SomeGenerator<Type> {
 	}
 	public internal(set) var current: Type? = nil
 
-	public static func generator(_ builder: @escaping (YieldProvider<Type>) -> Type) -> SomeGenerator {
+	public static func generator(_ builder: @escaping (YieldProvider<Type>) throws -> Type) -> SomeGenerator {
 		let generator =  SomeGenerator<Type>()
-		generator.yielder = YieldProvider<Type>(generator: generator)
 		generator.yieldsBlock = builder
 		return generator
 	}
@@ -149,17 +166,23 @@ public class SomeGenerator<Type> {
 				queue = DispatchQueue(label: "yield queue for generator")
 				guard let validQueue = queue else { return nil }
 				validQueue.async { [weak self] in
-					guard let validSelf = self else { return }
 					//check condition
-					while validSelf.who != .yield {
-						validSelf.yieldIsReady = true
+					while (self?.who ?? .yield) != .yield {
+						self?.yieldIsReady = true
 					}
-					let lastValue = yieldsBlock(validSelf.yielder)
-					validSelf.finished = true
-					validSelf.lastYielded = lastValue
-					//wakeUp generator thread
-					while !validSelf.nextIsReady {}
-					validSelf.who = .next
+					do {
+						let yielder = YieldProvider<Type>(generator: self)
+						let lastValue = try yieldsBlock(yielder)
+						self?.lastYielded = lastValue
+						self?.finished = true
+						//wakeUp generator thread
+						while !(self?.nextIsReady ?? false) {}
+						self?.who = .next
+					} catch {
+						//generator has been finished.
+						print("!!!! HERE")
+					}
+
 				}
 			}
 			//wait for yield
@@ -192,7 +215,7 @@ public class SomeGenerator<Type> {
 	internal var actionBuilder:    ((Int) -> Type?)?                    = nil
 	internal var isFinishedBlock:  ((Int, Type?) -> Bool)?              = nil
 	internal var additionalAction: ((Type, Any) -> Type)?               = nil
-	internal var yieldsBlock:      ((YieldProvider<Type>) -> Type)?     = nil
+	internal var yieldsBlock:      ((YieldProvider<Type>) throws -> Type)?     = nil
 
 	internal var iterationNumber: Int = 0
 	internal var _additionalParam: Any? = nil
@@ -210,7 +233,6 @@ public class SomeGenerator<Type> {
 		}
 	}
 
-	private var yielder:     YieldProvider<Type>!
 	private var queue:       DispatchQueue? = nil
 	private var syncQueue:   DispatchQueue = DispatchQueue(label: "generator sync queue")
 	private var _lastYielded: Type? = nil
@@ -223,6 +245,7 @@ public class SomeGenerator<Type> {
 
 		set {
 			syncQueue.sync {
+				guard !_finished else { return }
 				_lastYielded = newValue
 			}
 		}
@@ -322,7 +345,10 @@ public class SomeGenerator<Type> {
 		return nil
 	}
 
-	fileprivate func internalYield(_ whatToReturn: Type) -> Any? {
+	fileprivate func internalYield(_ whatToReturn: Type) throws -> Any? {
+		if finished {
+			throw Errors.generatorFinished
+		}
 		lastYielded = whatToReturn
 		while !nextIsReady {}
 		who = .next
@@ -334,6 +360,9 @@ public class SomeGenerator<Type> {
 				yieldIsSleeping = true
 				condition.wait()
 			}
+		}
+		if finished {
+			throw Errors.generatorFinished
 		}
 		yieldIsSleeping = false
 		return yieldReturn
