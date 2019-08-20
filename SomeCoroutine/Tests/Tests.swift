@@ -345,11 +345,145 @@ func testCancel() {
 		wait(for: [promise], timeout: 1)
 	}
 
+//coroutine tests
+
+	func testCoroutine() {
+		let g1 = SG<Int>.range(10)
+		let g2 = SG<Int>.range(10, 20, 1)
+		let g3 = SG<Int>.range(20, 30, 1)
+		let coroutine = SC<Int>.iterationsCoroutine(3)
+		coroutine.add(g1).add(g2).add(g3).onValue {
+			print($0)
+		}
+		.onNext {
+			XCTAssert($0 == 0)
+		}
+		.onNext {
+			XCTAssert($0 == 1)
+		}
+		.onNext {
+			XCTAssert($0 == 2)
+		}
+		.onNext {
+			XCTAssert($0 == 10)
+		}
+		.onNext {
+			XCTAssert($0 == 11)
+		}
+		.onNext {
+			XCTAssert($0 == 12)
+		}
+		.onNext {
+			XCTAssert($0 == 20)
+		}
+		.onNext {
+			XCTAssert($0 == 21)
+		}
+		.onNext {
+			XCTAssert($0 == 22)
+		}
+		.onNext {
+			XCTAssert($0 == 3)
+		}
+		.onNext {
+			XCTAssert($0 == 4)
+		}
+		.onNext {
+			XCTAssert($0 == 5)
+		}
+		.onNext {
+			XCTAssert($0 == 13)
+		}
+		.onNext {
+			XCTAssert($0 == 14)
+		}
+		.onNext {
+			XCTAssert($0 == 15)
+		}
+		.onNext {
+			XCTAssert($0 == 23)
+		}
+		.onNext {
+			XCTAssert($0 == 24)
+		}
+		.onNext {
+			XCTAssert($0 == 25)
+		}
+		.onNext {
+			XCTAssert($0 == 6)
+		}
+		.onNext {
+			XCTAssert($0 == 7)
+		}
+		.onNext {
+			XCTAssert($0 == 8)
+		}
+		.onNext {
+			XCTAssert($0 == 16)
+		}
+		.onNext {
+			XCTAssert($0 == 17)
+		}
+		.onNext {
+			XCTAssert($0 == 18)
+		}
+		.onNext {
+			XCTAssert($0 == 26)
+		}
+		.onNext {
+			XCTAssert($0 == 27)
+		}
+		.onNext {
+			XCTAssert($0 == 28)
+		}
+		.onNext {
+			XCTAssert($0 == 9)
+		}
+		.onNext {
+			XCTAssert($0 == 19)
+		}
+		.onNext {
+			XCTAssert($0 == 29)
+		}
+		.run()
+		
+		var resultToCheck = [0, 0, 0, 1, 1, 1, 2, 2, 2, 0, 0 ,0, 1, 1, 1, 2, 2, 2, 0, 1, 2]
+		let coroutine2 = SC<Int>.iterationsCoroutine(3, [SG<Int>.generator {
+			try $0.yield(0)
+			try $0.yield(0)
+			try $0.yield(0)
+			try $0.yield(0)
+			try $0.yield(0)
+			try $0.yield(0)
+			return 0
+		}, SG<Int>.generator {
+			try $0.yield(1)
+			try $0.yield(1)
+			try $0.yield(1)
+			try $0.yield(1)
+			try $0.yield(1)
+			try $0.yield(1)
+			return 1
+		}, SG<Int>.generator {
+			try $0.yield(2)
+			try $0.yield(2)
+			try $0.yield(2)
+			try $0.yield(2)
+			try $0.yield(2)
+			try $0.yield(2)
+			return 2
+		}]).onValue {
+			XCTAssert(resultToCheck[0] == $0)
+			resultToCheck.remove(at: 0)
+		}
+		coroutine2.run()
+		XCTAssert(coroutine2.state == .finished)
+	}
+
     func testPerformanceExample() {
         // This is an example of a performance test case.
         self.measure {
             // Put the code you want to measure the time of here.
         }
     }
-
 }

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B61F1133230C97A6002FC12C /* SomeCoroutine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6366E1C2302E117004F62C4 /* SomeCoroutine.swift */; };
 		B6366E1D2302E117004F62C4 /* SomeCoroutine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6366E1C2302E117004F62C4 /* SomeCoroutine.swift */; };
 		B6366E2A2302E157004F62C4 /* Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6366E292302E157004F62C4 /* Tests.swift */; };
 		B6366E2C2302E157004F62C4 /* libSomeCoroutine.a in Frameworks */ = {isa = PBXBuildFile; fileRef = B6366E192302E117004F62C4 /* libSomeCoroutine.a */; };
@@ -200,6 +201,7 @@
 			files = (
 				B6366E2A2302E157004F62C4 /* Tests.swift in Sources */,
 				B636A0252307648D00122650 /* SomeGenerator.swift in Sources */,
+				B61F1133230C97A6002FC12C /* SomeCoroutine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
